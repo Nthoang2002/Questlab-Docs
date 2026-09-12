@@ -1,0 +1,54 @@
+# Flow 4 — Reconciliation (cron 0 */3 * * * *)
+# Render: https://play.d2lang.com/
+
+shape: sequence_diagram
+
+sched: "Spring Scheduler"
+job: ReconciliationJob
+sync: SyncServiceImpl
+lsClient: LabelStudioClient
+ls: Label Studio
+logRepo: SyncJobLogRepository
+projectRepo: ProjectRepository
+taskRepo: TaskRepository
+assignedRepo: AssignedTaskRepository
+db: MariaDB
+
+sched -> job: "run() — cron sync.reconciliation.cron"
+
+Buoc_1_reconcileProjects: {
+  job -> sync: reconcileProjects()
+  sync -> logRepo: "SyncJobLog.start(SCHEDULED, PROJECT, RECONCILE)"
+  sync -> lsClient: "getProjects(page, pageSize=50) — lặp tới hết, sleep 200ms/trang"
+  lsClient -> ls: "GET /api/projects"
+  ls -> sync: "LsProjectPageResponse"
+  sync -> sync: "SAFETY: rỗng -> ABORT, ghi 'empty list from LS'"
+  sync -> projectRepo: "findAllActiveLsIds()"
+  sync -> sync: "DIFF: toInsert / toUpdate / toDelete"
+  sync -> projectRepo: "insertIfAbsent / updateFromWebhook / markLsDeletedByLsIds"
+  projectRepo -> db: "INSERT IGNORE / UPDATE projects"
+  sync -> logRepo: "SUCCESS + counters"
+  sync -> job: "ReconcileResult (exception -> job RETURN ngay)"
+}
+
+Buoc_2_tasks_cua_project_da_xoa: {
+  job -> sync: reconcileTasksForLsDeletedProjects()
+  sync -> assignedRepo: cancelActiveByProjectIds
+  sync -> taskRepo: markLsDeletedByProjectIds
+  sync -> job: "exception -> log.error + TIẾP TỤC"
+}
+
+Buoc_3_tasks_tung_project_ACTIVE: {
+  job -> projectRepo: findAllActiveLsIds()
+  job -> sync: "reconcileTasksForProject(lsProjectId) — vòng lặp"
+  sync -> lsClient: "getTasksByProject(id, page, 50)"
+  lsClient -> ls: "GET /api/tasks?project="
+  ls -> sync: "LsTaskPageResponse { tasks, total }"
+  sync -> sync: "SAFETY: rỗng + total=0 -> tin; rỗng + total khác -> ABORT"
+  sync -> assignedRepo: "cancelActiveByLsTaskIds (TRƯỚC)"
+  sync -> taskRepo: "insertIfAbsent / updateByLsTaskId / markLsDeletedByLsIds"
+  taskRepo -> db: "INSERT IGNORE / UPDATE tasks"
+  sync -> job: "1 project lỗi -> projectsFailed++, TIẾP TỤC"
+}
+
+job -> job: "log tổng kết projects(i,u,d) tasks(i,u,d) taskProjects(ok,fail)"

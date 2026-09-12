@@ -1,0 +1,40 @@
+# Flow 10 — Media signed URL
+# Render: https://play.d2lang.com/
+
+shape: sequence_diagram
+
+app: Mobile App
+taskCtrl: TaskController
+taskSvc: TaskServiceImpl
+lsClient: LabelStudioClient
+signing: MediaSigningServiceImpl
+mediaCtrl: MediaController
+mediaSvc: MediaServiceImpl
+ls: Label Studio
+storage: "S3 / MinIO / LS storage"
+
+Buoc_1_lay_task_va_ky_URL: {
+  app -> taskCtrl: "GET /tasks/{taskId}"
+  taskCtrl -> taskSvc: "getTaskById(userId, taskId)"
+  taskSvc -> lsClient: "getTaskById(lsTaskId)"
+  lsClient -> ls: "GET /api/tasks/{id} (header Token)"
+  ls -> taskSvc: "data gốc — URL trỏ vào LS, app KHÔNG gọi được (401)"
+  taskSvc -> signing: "sign(path, userId)"
+  signing -> taskSvc: "/media/{path}?expires=..&signature=HMAC-SHA256(path|userId|expires)"
+  taskSvc -> app: "task data với URL đã ký (TTL 10 phút)"
+}
+
+Buoc_2_tai_file: {
+  app -> mediaCtrl: "GET /media/**?expires&signature (kèm Authorization)"
+  mediaCtrl -> mediaCtrl: "CurrentUserFilter BỎ QUA (/media/ nằm trong WHITE_LIST)"
+  mediaCtrl -> mediaCtrl: "checkAuthorization + getUserUUIDFromToken -> tokenUserId"
+  mediaCtrl -> mediaCtrl: "extractSignedPath — cắt theo indexOf('/media/')"
+  mediaCtrl -> mediaSvc: "getMedia(path, tokenUserId, expires, signature, response)"
+  mediaSvc -> signing: "isValid(...)"
+  signing -> mediaSvc: "sai chữ ký / hết hạn / userId khác -> 403"
+  mediaSvc -> ls: "HttpURLConnection + header Token (CHỈ khi protocol+host+port == LS)"
+  ls -> mediaSvc: "303 redirect"
+  mediaSvc -> storage: "follow redirect (tối đa 5) — KHÔNG kèm token LS"
+  storage -> mediaSvc: "bytes"
+  mediaSvc -> app: "stream nội dung"
+}

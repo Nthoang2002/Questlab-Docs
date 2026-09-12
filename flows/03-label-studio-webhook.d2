@@ -1,0 +1,44 @@
+# Flow 3 — Label Studio Webhook
+# Render: https://play.d2lang.com/
+
+shape: sequence_diagram
+
+ls: Label Studio
+ctrl: LsWebhookController
+pool: "lsSyncExecutor (core 3, max 20, queue 100, CallerRunsPolicy)"
+sync: SyncServiceImpl
+matcher: ProjectTemplateMatcher
+projectRepo: ProjectRepository
+taskRepo: TaskRepository
+assignedRepo: AssignedTaskRepository
+db: MariaDB
+
+ls -> ctrl: "POST /internal/webhooks/label-studio (LsWebhookPayload)"
+ctrl -> ctrl: "objectMapper.readValue — parse fail = 400"
+ctrl -> pool: "dispatch @Async theo payload.action"
+ctrl -> ls: "200 OK NGAY (không chờ xử lý)"
+
+PROJECT_CREATED_hoặc_UPDATED: {
+  pool -> sync: "handleProjectCreated / handleProjectUpdated"
+  sync -> matcher: "resolve(label_config XML)"
+  matcher -> sync: "MatchContext { templateId, matchStatus, logicSignature }"
+  sync -> projectRepo: "insertIfAbsent / updateFromWebhook\nMATCHED -> ACTIVE, else INACTIVE"
+  projectRepo -> db: "INSERT IGNORE / UPDATE projects"
+  sync -> sync: "labelConfigResolver.evictByLsProjectId()"
+}
+
+TASK_CREATED: {
+  pool -> sync: "handleTasksCreated(lsProjectId, tasks)"
+  sync -> projectRepo: "findByLsProjectId"
+  projectRepo -> sync: "null -> log.warn + return (reconcile sẽ chữa)"
+  sync -> taskRepo: "insertIfAbsent (INSERT IGNORE, idempotent)\nMATCHED -> AVAILABLE, else UNAVAILABLE"
+  taskRepo -> db: "INSERT IGNORE tasks"
+}
+
+TASK_DELETED: {
+  pool -> sync: "handleTasksDeleted(tasks)"
+  sync -> assignedRepo: "cancelActiveByLsTaskIds — HUỶ ASSIGNMENT TRƯỚC"
+  assignedRepo -> db: "UPDATE assigned_tasks SET status = CANCELLED"
+  sync -> taskRepo: "markLsDeletedByLsIds — rồi mới đánh dấu xoá"
+  taskRepo -> db: "UPDATE tasks SET ls_deleted = true"
+}

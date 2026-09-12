@@ -1,0 +1,117 @@
+# Questlab — Task Import (Portal / SFTP / External Storage)
+# Render: https://play.d2lang.com/
+
+direction: right
+
+title: |md
+  # Task Import — 3 nguồn, 1 pipeline
+| {near: top-center}
+
+admin: "Admin Portal" {shape: person}
+
+sources: "Nguồn dữ liệu" {
+  portal: "PORTAL_UPLOAD / PORTAL_BATCH_UPLOAD"
+  sftpSrc: "SFTP\n(task-import.sftp.enabled = false)"
+  extSrc: "EXTERNAL_STORAGE_SCHEDULED\n(enabled = true)"
+}
+
+api: "API Layer" {
+  importCtrl: "TaskImportController\n/projects/{uuid}/task-imports/**"
+  jobCtrl: "TaskImportJobController\n/task-import-jobs/{uuid}"
+  extCtrl: "ExternalStorageController\n/external-storage/**"
+  assetCtrl: "ExternalAssetController\n/external-assets/{ref}"
+}
+
+jobs: "Scheduler" {
+  worker: "TaskImportWorkerJob\nfixedDelay 10s\nclaimStatus() = compare-and-set" {
+    style.fill: "#eaffea"
+  }
+  tick: "ExternalStorageSchedulerTick\ncron 0 * * * * *"
+  sftpJob: "SftpImportScannerJob\ncron 0 */5 * * * *"
+}
+
+pipeline: "Import pipeline (dùng chung cho SYNC và ASYNC)" {
+  readiness: ProjectReadinessValidator
+  fileValidator: TaskImportFileValidator
+  keyResolver: "LabelConfigDataKeyResolver\n(label_config XML -> data key)"
+  parser: "TaskImportParserFactory\nJSON / CSV / TSV / TXT"
+  planner: "ImportItemPlanner\n(retry: chỉ gửi item chưa có ls_task_id)"
+  storage: "ImportFileStorage\nFILE_SERVICE | LOCAL"
+  lsImport: "LabelStudioImportClient"
+  mirror: "ImportMirrorExecutor\n-> TaskMirrorServiceImpl"
+}
+
+extScan: "External storage scan" {
+  evaluator: "ScheduleFireEvaluator\n+ CronCompiler"
+  runSvc: ExternalStorageRunService
+  scanSvc: ExternalStorageScanService
+  factory: ExternalImportJobFactory
+  archive: "ExternalStorageArchiveService\n{root}/{projectUuid}/{yyyy}/{MM}/{dd}/{batchId}"
+  registry: "ExternalStorageProviderRegistry"
+  cipher: "AesGcmSecretCipher\n(mã hoá credential)"
+}
+
+db: "MariaDB" {
+  shape: cylinder
+  j: "task_import_jobs / _job_files / _items"
+  e: "external_storage_profiles / _schedules / _runs"
+  b: "external_import_batches / _batch_jobs"
+  a: "external_task_assets / external_duplicate_registry"
+  t: "tasks (mirror)"
+}
+
+ls: "Label Studio\nPOST /api/projects/{id}/import\nGET  /api/projects/{id}/imports/{importId}" {
+  shape: hexagon
+}
+fileSvc: "file-service" {shape: hexagon}
+s3: "S3 / MinIO" {shape: cylinder}
+sftp: "SFTP server" {shape: cylinder}
+
+# entry
+admin -> api.importCtrl: "preview / create"
+admin -> api.jobCtrl: "status / items / retry"
+admin -> api.extCtrl: "profiles / schedules / runs / batches"
+admin -> api.assetCtrl
+
+sources.portal -> api.importCtrl
+sources.sftpSrc -> jobs.sftpJob
+sources.extSrc -> jobs.tick
+
+# pipeline
+api.importCtrl -> pipeline.readiness -> pipeline.fileValidator -> pipeline.keyResolver
+pipeline.keyResolver -> pipeline.parser -> pipeline.planner
+pipeline.planner -> pipeline.lsImport -> ls
+pipeline.lsImport -> pipeline.mirror
+pipeline.mirror -> db.t
+pipeline.storage -> fileSvc
+
+jobs.worker -> db.j: "claim PENDING/RETRYING/WAITING -> QUEUED"
+jobs.worker -> pipeline.readiness: "cùng pipeline với SYNC"
+
+# external storage
+jobs.tick -> extScan.evaluator -> extScan.runSvc -> extScan.scanSvc
+extScan.scanSvc -> extScan.registry
+extScan.registry -> s3
+extScan.registry -> sftp
+extScan.scanSvc -> extScan.factory: "tạo TaskImportJob"
+extScan.factory -> db.j
+extScan.scanSvc -> extScan.archive
+extScan.registry -> extScan.cipher: "giải mã credential từ DB"
+
+jobs.sftpJob -> sftp
+jobs.sftpJob -> db.j
+
+api.extCtrl -> db.e
+api.extCtrl -> db.b
+api.assetCtrl -> db.a
+
+statemachine: |md
+  ### ImportJobStatus
+  `PENDING` -> `STORED` -> `VALIDATING` -> `QUEUED`
+  -> `IMPORTING_TO_LABEL_STUDIO`
+  -> `WAITING_LABEL_STUDIO_IMPORT` -> `SYNCING_LOCAL_TASKS`
+  -> `COMPLETED` / `PARTIAL_FAILED` / `FAILED_RETRYABLE` -> `RETRYING`
+
+  TERMINAL = COMPLETED, FAILED, FAILED_PERMANENT, CANCELLED
+  (terminal thì `canTransitionTo` luôn trả false)
+| {near: bottom-center}

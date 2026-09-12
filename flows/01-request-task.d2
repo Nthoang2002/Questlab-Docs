@@ -1,0 +1,56 @@
+# Flow 1 — Request Task (POST /assignments/request)
+# Render: https://play.d2lang.com/
+
+shape: sequence_diagram
+
+app: Mobile App
+filter: CurrentUserFilter
+ctrl: AssignmentController
+dist: TaskDistributionServiceImpl
+assignedRepo: AssignedTaskRepository
+auth: auth-service
+elig: ProjectEligibilityServiceImpl
+gate: QualificationAssignmentGate
+taskRepo: TaskRepository
+db: MariaDB
+
+app -> filter: "POST /assignments/request (Bearer JWT)"
+filter -> filter: "getUserUUIDFromToken -> CurrentUserContext.set(userId)"
+filter -> ctrl: doFilter
+ctrl -> ctrl: "authClient.checkAuthorization()"
+ctrl -> dist: "requestTask(userId)"
+
+TX_Transactional: {
+  dist -> assignedRepo: "1. countActiveByUserId(userId)"
+  assignedRepo -> db: "SELECT COUNT(*) WHERE status = PENDING"
+  db -> assignedRepo: "n"
+  assignedRepo -> dist: "n >= max-concurrent-tasks (10) -> QUOTA_EXCEEDED"
+
+  dist -> auth: "2. AuthProfileClient.getUserProfile(userId)"
+  auth -> dist: "AuthUserProfileDto (lỗi -> AuthProfileUnavailableException 503)"
+
+  dist -> dist: "3. profileContextBuilder.build(profile)"
+
+  dist -> elig: "4. findEligibleProjects(userId, context)"
+  elig -> db: "findActiveAssignableProjects(ACTIVE, MATCHED, now)"
+  elig -> elig: "policyEvaluator.evaluate() — không có policy = ALLOW"
+  elig -> dist: "List<ProjectCandidate>"
+
+  dist -> gate: "5. blockedProjectIds(userId, projectIds)"
+  gate -> db: "campaign links + config frozen + attempt PASSED"
+  gate -> dist: "Set bị chặn -> loại khỏi candidate"
+
+  dist -> taskRepo: "6. findNextAssignableTaskId(userId, ids)"
+  taskRepo -> db: "native SQL ... LIMIT 1 FOR UPDATE"
+  db -> taskRepo: "taskId — ROW ĐÃ KHOÁ"
+  taskRepo -> dist: "Task"
+
+  dist -> assignedRepo: "7. save(AssignedTask PENDING + snapshot policy/profile)"
+  assignedRepo -> db: "INSERT assigned_tasks"
+
+  dist -> taskRepo: "8. updateTaskStatus(id, IN_PROGRESS)"
+  taskRepo -> db: "UPDATE tasks — COMMIT nhả row lock"
+}
+
+dist -> ctrl: "RequestTaskResult"
+ctrl -> app: "200 GetMethodResponse { data, message }"

@@ -1,0 +1,82 @@
+# Questlab — Partner Integration (SDK service-to-service)
+# Render: https://play.d2lang.com/
+
+direction: right
+
+title: |md
+  # Partner Integration — /integration/**
+| {near: top-center}
+
+partner: "Partner backend\n(header: x-api-key)" {shape: person}
+admin: "Questlab Admin" {shape: person}
+
+gateway: "API Gateway\n- đổi x-api-key -> JWT (qua auth-service)\n- STRIP Authorization client gửi lên" {
+  shape: hexagon
+  style.fill: "#fff0d0"
+}
+
+authService: "auth-service\n/internal/users/provision\n/internal/users/provision-session" {shape: hexagon}
+
+questlab: "questlab-service" {
+
+  filters: "Filter chain" {
+    currentUser: "CurrentUserFilter\nWHITE_LIST chứa /integration/ => BỎ QUA\n(sub là owner user, không phải acting user)"
+    partnerFilter: "IntegrationPartnerFilter\nAI đang gọi?" {
+      style.fill: "#ffe8e8"
+    }
+    jwtVerifier: "JwtVerifier\nHMAC-SHA256, alg allowlist HS256\nfail closed nếu thiếu auth.secret-key"
+  }
+
+  ctrl: "IntegrationController\nĐƯỢC PHÉP gì? verifyPermission()"
+  adminCtrl: "PartnerAdminController\n/admin/integration/**"
+
+  svc: "Business Layer" {
+    userSync: "PartnerUserSyncServiceImpl\ninitUser"
+    taskSync: "PartnerTaskSyncServiceImpl\nrequestTask"
+    annSync: "PartnerAnnotationSyncServiceImpl\nsubmitAnnotation"
+    partnerSvc: PartnerServiceImpl
+    logSvc: IntegrationTransactionLogServiceImpl
+    labelingEvt: "PartnerLabelingEventServiceImpl\n(no-op với user thường)"
+  }
+
+  dist: "TaskDistributionServiceImpl\nassignAnyAvailableTask()"
+  ctx: "PartnerContext + TransactionContext\n(ThreadLocal, clear trong finally)"
+}
+
+repo: "Repository" {
+  partnerRepo: IntegrationPartnerRepository
+  mappingRepo: "PartnerUserMappingRepository\nexternalUserId <-> questlabUserId"
+  logRepo: IntegrationTransactionLogRepository
+  taskRepo: "TaskRepository\nfindNextAvailableTaskIdOutsideGatedCampaigns\n(FOR UPDATE)"
+}
+
+db: "MariaDB\nintegration_partners / partner_user_mappings\nintegration_transaction_logs / tasks / assigned_tasks" {
+  shape: cylinder
+}
+
+partner -> gateway: "x-api-key + transactionId"
+gateway -> questlab.filters.partnerFilter: "Bearer JWT"
+questlab.filters.partnerFilter -> questlab.filters.jwtVerifier: "verify chữ ký"
+questlab.filters.partnerFilter -> repo.partnerRepo: "JWT.sub -> auth_client.owner_id\n-> integration_partners.auth_client_id"
+questlab.filters.partnerFilter -> questlab.ctx: "set(partnerId, partnerCode, transactionId)"
+questlab.filters.partnerFilter -> questlab.ctrl
+
+questlab.ctrl -> questlab.svc.userSync: "POST /integration/users/init"
+questlab.ctrl -> questlab.svc.taskSync: "POST /integration/tasks/request"
+questlab.ctrl -> questlab.svc.annSync: "POST /integration/tasks/{id}/submit"
+
+questlab.svc.userSync -> authService: "provisionUser rồi provisionUserWithSession\n(2 BƯỚC — 1 bước sẽ mất profile)"
+questlab.svc.userSync -> repo.mappingRepo
+
+questlab.svc.taskSync -> repo.mappingRepo: "externalUserId? định danh : pool __PARTNER_POOL__"
+questlab.svc.taskSync -> questlab.dist
+questlab.dist -> repo.taskRepo
+questlab.svc.taskSync -> questlab.svc.logSvc
+questlab.svc.annSync -> questlab.svc.logSvc
+questlab.svc.logSvc -> repo.logRepo
+
+questlab.svc.labelingEvt -> repo.logRepo
+
+admin -> questlab.adminCtrl -> questlab.svc.partnerSvc -> repo.partnerRepo
+
+repo -> db

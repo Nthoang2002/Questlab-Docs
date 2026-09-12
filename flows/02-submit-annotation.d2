@@ -1,0 +1,55 @@
+# Flow 2 — Submit Annotation (POST /annotations)
+# Render: https://play.d2lang.com/
+
+shape: sequence_diagram
+
+app: Mobile App
+ctrl: AnnotationController
+svc: AnnotationServiceImpl
+assignedRepo: AssignedTaskRepository
+taskRepo: TaskRepository
+validator: AnnotationValidationOrchestrator
+lsClient: LabelStudioClient
+ls: Label Studio
+annRepo: TaskAnnotationRepository
+redis: Redis
+db: MariaDB
+
+app -> ctrl: "POST /annotations?assignedTaskId={uuid}"
+ctrl -> svc: "createAnnotation(userId, request, assignedTaskId)"
+
+TX_Transactional: {
+  svc -> assignedRepo: "1. findByUuidAndStatus(id, PENDING)"
+  assignedRepo -> db: SELECT
+  db -> svc: "AssignedTask (empty -> 404 No active assignment)"
+
+  svc -> svc: "2. expiredAt < now -> BadRequestException"
+  svc -> svc: "3. assignedTask.userId != userId -> UnAuthorizedException"
+
+  svc -> taskRepo: "4. findById(assignedTask.taskId)"
+  taskRepo -> db: SELECT
+  db -> svc: "Task (UNAVAILABLE -> BadRequestException)"
+
+  svc -> validator: "5. validate(request, projectId)"
+  validator -> db: "LabelConfigResolver (cache theo lsProjectId)"
+  validator -> svc: "OK / AnnotationValidationException"
+
+  svc -> lsClient: "6. createAnnotation(payload, lsTaskId)"
+  lsClient -> ls: "POST /api/tasks/{lsTaskId}/annotations"
+  ls -> lsClient: "{ id, result, lead_time }"
+  lsClient -> svc: "JsonNode (lỗi -> LabelStudioException 502/503)"
+
+  svc -> annRepo: "7a. save(TaskAnnotation)"
+  annRepo -> db: "INSERT task_annotations"
+  svc -> assignedRepo: "7b. status = ANNOTATED"
+  assignedRepo -> db: "UPDATE assigned_tasks"
+  svc -> taskRepo: "7c. incrementAnnotationCount"
+  taskRepo -> db: "UPDATE tasks SET annotation_count += 1"
+  svc -> taskRepo: "7d. đủ overlap -> updateTaskStatus(COMPLETED)"
+  taskRepo -> db: "UPDATE tasks"
+
+  svc -> redis: "8. enqueueWatchlist(userId) — HSET"
+}
+
+svc -> ctrl: "CreateAnnotationResponse { id, result }"
+ctrl -> app: "200 GetMethodResponse"

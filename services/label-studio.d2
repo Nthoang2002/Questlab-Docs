@@ -1,0 +1,90 @@
+# Questlab — Label Studio integration
+# Render: https://play.d2lang.com/
+
+direction: right
+
+title: |md
+  # Label Studio integration — 3 kênh đồng bộ
+| {near: top-center}
+
+app: "Mobile App / Portal" {shape: person}
+
+questlab: "questlab-service" {
+
+  webhookIn: "LsWebhookController\nPOST /internal/webhooks/label-studio" {
+    style.fill: "#e8f4ff"
+  }
+
+  media: "MediaController\nGET /media/**"
+
+  annotationApi: "AnnotationController\nPOST /annotations"
+  taskApi: "TaskController\nGET /tasks/{id}"
+
+  sync: "SyncServiceImpl" {
+    style.fill: "#fff4e0"
+    handlers: "handleProjectCreated / Updated / Deleted\nhandleTasksCreated / Deleted\n@Async(lsSyncExecutor)"
+    reconcile: "reconcileProjects\nreconcileTasksForProject\nreconcileTasksForLsDeletedProjects"
+  }
+
+  matcher: "ProjectTemplateMatcher\n+ TemplateNormalizer\n(template gate)"
+
+  annotationSvc: "AnnotationServiceImpl"
+  taskSvc: "TaskServiceImpl"
+  mediaSvc: "MediaServiceImpl\n+ MediaSigningServiceImpl"
+
+  lsClient: "LabelStudioClient\n(RestTemplate)" {
+    style.fill: "#ffe8e8"
+  }
+  lsImportClient: "LabelStudioImportClient"
+
+  repos: "ProjectRepository\nTaskRepository\nAssignedTaskRepository\nTaskAnnotationRepository\nSyncJobLogRepository"
+}
+
+job: "ReconciliationJob\ncron: sync.reconciliation.cron (0 */3 * * * *)" {
+  style.fill: "#eaffea"
+}
+
+db: "MariaDB — questlab_data\nprojects / tasks / task_annotations / sync_job_log" {
+  shape: cylinder
+}
+
+ls: "Label Studio\n/api/projects  /api/tasks  /api/annotations\n/api/projects/{id}/import" {
+  shape: hexagon
+  style.fill: "#f0e8ff"
+}
+
+storage: "LS object storage\n(S3 / MinIO / local)" {shape: cylinder}
+
+# ── kênh 1: webhook (LS -> Questlab) ──
+ls -> questlab.webhookIn: "1. webhook event\nPROJECT_* / TASK_*"
+questlab.webhookIn -> questlab.sync.handlers: "dispatch @Async, trả 200 ngay"
+questlab.sync.handlers -> questlab.matcher: "resolve(label_config)"
+questlab.sync.handlers -> questlab.repos: "insertIfAbsent / updateFromWebhook\nmarkLsDeleted / cancelActive"
+
+# ── kênh 2: reconciliation (Questlab pull LS) ──
+job -> questlab.sync.reconcile: "2. mỗi 3 phút"
+questlab.sync.reconcile -> questlab.lsClient: "getProjects / getTasksByProject\n(paginated)"
+questlab.lsClient -> ls
+questlab.sync.reconcile -> questlab.repos: "DIFF + APPLY + sync_job_log"
+
+# ── kênh 3: command (Questlab -> LS) ──
+app -> questlab.annotationApi: "POST /annotations"
+questlab.annotationApi -> questlab.annotationSvc
+questlab.annotationSvc -> questlab.lsClient: "3. createAnnotation\n(ghi LS TRƯỚC)"
+questlab.annotationSvc -> questlab.repos: "mirror task_annotations\n+ assigned_tasks=ANNOTATED\n+ annotation_count++"
+
+app -> questlab.taskApi: "GET /tasks/{id}"
+questlab.taskApi -> questlab.taskSvc
+questlab.taskSvc -> questlab.lsClient: "getTaskById"
+questlab.taskSvc -> questlab.mediaSvc: "rewriteMediaUrls -> signed URL"
+
+questlab.lsImportClient -> ls: "POST /api/projects/{id}/import\n(task-import module)"
+
+# ── media proxy ──
+app -> questlab.media: "GET /media/**?expires&signature"
+questlab.media -> questlab.mediaSvc: "isValid(path,userId,expires,sig)"
+questlab.mediaSvc -> ls: "proxy + header Token (chỉ khi host==LS)"
+ls -> storage: "303 redirect"
+questlab.mediaSvc -> storage: "follow redirect KHÔNG kèm token LS"
+
+questlab.repos -> db

@@ -1,0 +1,92 @@
+# Questlab — Task Assignment domain
+# Render: https://play.d2lang.com/
+
+direction: right
+
+title: |md
+  # Task Assignment — POST /assignments/request
+| {near: top-center}
+
+client: "Mobile App / Portal" {shape: person}
+
+api: "API Layer" {
+  assignmentController: AssignmentController
+  taskController: TaskController
+  recController: TaskRecommendationController
+}
+
+business: "Business Layer" {
+  taskDistribution: TaskDistributionServiceImpl
+
+  eligibility: ProjectEligibilityServiceImpl
+  policyService: ProjectAssignmentPolicyServiceImpl
+  evaluator: AssignmentPolicyEvaluatorImpl
+  ctxBuilder: AssignmentProfileContextBuilder
+  gate: QualificationAssignmentGate
+
+  taskService: TaskServiceImpl
+  recAssign: RecommendedTaskAssignmentServiceImpl
+}
+
+repo: "Repository Layer" {
+  taskRepo: TaskRepository
+  assignedRepo: AssignedTaskRepository
+  projectRepo: ProjectRepository
+  policyRepo: ProjectAssignmentPolicyRepository
+  campaignProjectRepo: CampaignProjectRepository
+}
+
+db: "MariaDB — questlab_data" {
+  shape: cylinder
+
+  tasks: tasks
+  assigned: assigned_tasks
+  projects: projects
+  policies: project_assignment_policies
+}
+
+redis: "Redis (database 11)" {shape: cylinder}
+
+authService: "auth-service" {shape: hexagon}
+
+job: "AssignmentExpiryJob\ncron: assignment.expiry.cron"
+
+# ── entry points ──
+client -> api.assignmentController: "POST /assignments/request"
+client -> api.taskController: "GET /tasks/my-assigned"
+client -> api.recController: "POST /recommendations/{id}/assign"
+
+api.assignmentController -> business.taskDistribution: "requestTask(userId)"
+api.taskController -> business.taskService
+api.recController -> business.recAssign
+
+# ── requestTask, 8 steps, one @Transactional ──
+business.taskDistribution -> repo.assignedRepo: "1. countActiveByUserId (quota)"
+business.taskDistribution -> authService: "2. AuthProfileClient.getUserProfile"
+business.taskDistribution -> business.ctxBuilder: "3. build profile context"
+business.taskDistribution -> business.eligibility: "4. findEligibleProjects"
+business.taskDistribution -> business.gate: "5. blockedProjectIds"
+business.taskDistribution -> repo.taskRepo: "6. findNextAssignableTaskId\nFOR UPDATE"
+business.taskDistribution -> repo.assignedRepo: "7. save AssignedTask PENDING"
+business.taskDistribution -> repo.taskRepo: "8. updateTaskStatus IN_PROGRESS"
+
+business.eligibility -> repo.projectRepo: "findActiveAssignableProjects"
+business.eligibility -> business.policyService: "getEnabledCompiledPolicy"
+business.policyService -> repo.policyRepo
+business.eligibility -> business.evaluator: "evaluate(policy, context)"
+business.gate -> repo.campaignProjectRepo: "findActiveCampaignLinks"
+
+business.recAssign -> repo.taskRepo: "lockRecommendedTaskForUser\nFOR UPDATE"
+business.recAssign -> redis: "readLookup / evictUserCache"
+
+# ── persistence ──
+repo.taskRepo -> db.tasks
+repo.assignedRepo -> db.assigned
+repo.projectRepo -> db.projects
+repo.policyRepo -> db.policies
+repo.campaignProjectRepo -> db
+
+# ── background ──
+job -> repo.assignedRepo: "markExpiredBefore"
+job -> repo.taskRepo: "revertToAvailableWhereNoPending"
+job -> redis: "enqueueWatchlist"

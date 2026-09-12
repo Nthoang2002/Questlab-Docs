@@ -1,0 +1,60 @@
+# Flow 9 — Partner SDK (init -> request -> submit)
+# Render: https://play.d2lang.com/
+
+shape: sequence_diagram
+
+partner: "Partner backend"
+gw: "API Gateway"
+authsvc: auth-service
+filter: IntegrationPartnerFilter
+verifier: JwtVerifier
+ctrl: IntegrationController
+userSync: PartnerUserSyncServiceImpl
+taskSync: PartnerTaskSyncServiceImpl
+annSync: PartnerAnnotationSyncServiceImpl
+dist: TaskDistributionServiceImpl
+taskRepo: TaskRepository
+logSvc: IntegrationTransactionLogService
+db: MariaDB
+
+partner -> gw: "x-api-key + transactionId"
+gw -> authsvc: "đổi x-api-key thành JWT"
+authsvc -> gw: "JWT (ttl = -1, không có exp)"
+gw -> filter: "Bearer JWT (gateway STRIP Authorization của client)"
+
+Filter_xac_dinh_partner: {
+  filter -> verifier: "verifyAndGetClaims — HS256, allowlist 1 alg, constant-time compare"
+  filter -> db: "JWT.sub -> auth_client.owner_id -> integration_partners.auth_client_id"
+  filter -> filter: "X-Partner-Code khác -> 403 PARTNER_CODE_MISMATCH"
+  filter -> filter: "thiếu transactionId -> 400 TRANSACTION_ID_REQUIRED"
+  filter -> filter: "PartnerContext.set + TransactionContext.set (clear ở finally)"
+}
+
+Buoc_1_init_user: {
+  filter -> ctrl: "POST /integration/users/init"
+  ctrl -> ctrl: "verifyPermission(INTEGRATION_USER_INIT)"
+  ctrl -> userSync: initUser
+  userSync -> authsvc: "provisionUser — tạo user + user_profile + member_profile"
+  userSync -> authsvc: "provisionUserWithSession — lấy phiên"
+  userSync -> db: "INSERT partner_user_mappings"
+}
+
+Buoc_2_request_task: {
+  filter -> ctrl: "POST /integration/tasks/request"
+  ctrl -> ctrl: "verifyPermission(INTEGRATION_TASK_REQUEST)"
+  ctrl -> taskSync: requestTask
+  taskSync -> db: "externalUserId có -> mapping bắt buộc (else USER_NOT_INITIALIZED)\nrỗng -> pool __PARTNER_POOL__"
+  taskSync -> dist: "assignAnyAvailableTask(questlabUserId)"
+  dist -> taskRepo: "findNextAvailableTaskIdOutsideGatedCampaigns(userId) — FOR UPDATE"
+  taskRepo -> db: "JOIN projects + overlap + user dedup + loại campaign gated"
+  dist -> db: "INSERT assigned_tasks (PENDING) + tasks -> IN_PROGRESS"
+  taskSync -> logSvc: "logAssignment SUCCESS/FAILED"
+  logSvc -> db: "INSERT integration_transaction_logs"
+}
+
+Buoc_3_submit: {
+  filter -> ctrl: "POST /integration/tasks/{assignedTaskId}/submit"
+  ctrl -> ctrl: "verifyPermission(INTEGRATION_ANNOTATION_SUBMIT)"
+  ctrl -> annSync: "submitAnnotation — giống Flow 2"
+  annSync -> logSvc: "ghi log đối soát"
+}

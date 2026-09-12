@@ -1,0 +1,61 @@
+# Flow 8 — Payout: request -> paid
+# Render: https://play.d2lang.com/
+
+shape: sequence_diagram
+
+user: Annotator
+accountant: "Kế toán / Admin"
+reqCtrl: PayoutRequestController
+adminCtrl: PayoutRequestAdminController
+reqSvc: PayoutRequestServiceImpl
+procSvc: PayoutProcessingServiceImpl
+sm: "PayoutStateMachine (static)"
+ledger: CompensationLedgerWriter
+sumRepo: UserCompensationSummaryRepository
+reqRepo: PayoutRequestRepository
+outbox: "PayoutNotificationRepository (outbox)"
+job: PayoutNotificationDispatchJob
+notif: notification-service
+db: MariaDB
+
+Tao_yeu_cau_rut: {
+  user -> reqCtrl: "POST /payout-requests"
+  reqCtrl -> reqSvc: "createRequest — @Transactional"
+  reqSvc -> ledger: "lockOrCreateSummary(userId, currency)"
+  ledger -> sumRepo: "lockByUserIdAndCurrency — PESSIMISTIC_WRITE (khoá 1)"
+  sumRepo -> db: "SELECT ... FOR UPDATE"
+  reqSvc -> reqSvc: "re-check available BÊN TRONG khoá"
+  reqSvc -> reqRepo: "INSERT payout_requests (PENDING)"
+  reqSvc -> ledger: "apply(PAYOUT_RESERVE, key = PAYOUT_RESERVE:...)"
+  ledger -> db: "available -= amount, pending += amount\n(thiếu -> INSUFFICIENT_AVAILABLE)"
+}
+
+Ke_toan_bat_dau_xu_ly: {
+  accountant -> adminCtrl: "POST /admin/payout-requests/{uuid}/start-processing"
+  adminCtrl -> procSvc: "@Transactional"
+  procSvc -> reqRepo: "lockByUuid — PESSIMISTIC_WRITE (khoá 1: request)"
+  procSvc -> sm: "PENDING -> PROCESSING ?"
+  sm -> procSvc: "hợp lệ, MonetaryEffect = NONE"
+  procSvc -> db: "UPDATE status + INSERT payout_attempts (IN_PROGRESS)"
+}
+
+Ke_toan_danh_dau_da_chi: {
+  accountant -> adminCtrl: "POST /admin/payout-requests/{uuid}/mark-paid"
+  adminCtrl -> procSvc: "@Transactional"
+  procSvc -> reqRepo: "lockByUuid (khoá 1: request)"
+  procSvc -> sm: "PROCESSING -> PAID ?"
+  sm -> procSvc: "hợp lệ, MonetaryEffect = SETTLEMENT"
+  procSvc -> ledger: "apply(PAYOUT_SETTLEMENT)"
+  ledger -> sumRepo: "lock summary (khoá 2 — THỨ TỰ CỐ ĐỊNH, không deadlock)"
+  ledger -> db: "pending -= amount, totalPaid += amount\n(available KHÔNG đổi — đã trừ lúc RESERVE)"
+  procSvc -> db: "payout_attempts -> SUCCESS"
+  procSvc -> outbox: "INSERT payout_notifications (PENDING)"
+}
+
+Outbox_dispatch: {
+  job -> outbox: "reclaimStale() — SENDING kẹt -> PENDING"
+  job -> outbox: "dispatchBatch()"
+  job -> notif: "NotificationClient push/mail"
+  notif -> job: "SENT | FAILED | SKIPPED"
+  job -> job: "RuntimeException bị nuốt — row vẫn trong outbox"
+}

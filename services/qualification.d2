@@ -1,0 +1,86 @@
+# Questlab — Qualification & Question Bank
+# Render: https://play.d2lang.com/
+
+direction: right
+
+title: |md
+  # Qualification & Question Bank (RS2-10027)
+| {near: top-center}
+
+admin: "Admin / Reviewer" {shape: person}
+candidate: "Annotator (candidate)" {shape: person}
+
+api: "API Layer" {
+  questionCtrl: "QuestionController\n/questions"
+  setCtrl: "QuestionSetController\n/question-sets"
+  qualCtrl: "CampaignQualificationController\n/campaigns/{id}/qualification"
+  qQuestionCtrl: "QualificationQuestionController\n/qualification/questions"
+  attemptStartCtrl: "CampaignQualificationAttemptController\nPOST .../attempts"
+  attemptCtrl: "QualificationAttemptController\n/qualification/attempts/{id}"
+}
+
+svc: "Business Layer" {
+  questionSvc: QuestionServiceImpl
+  setSvc: QuestionSetServiceImpl
+  configSvc: CampaignQualificationServiceImpl
+  qQuestionSvc: QualificationQuestionServiceImpl
+  reviewSvc: "QualificationReviewServiceImpl\nrequired-approvals = 2"
+  readinessSvc: QualificationReadinessServiceImpl
+  poolSvc: "QualificationPoolServiceImpl\nfreezeForGoLive()"
+  attemptSvc: QualificationAttemptServiceImpl
+  starter: QualificationAttemptStarter
+  selector: AttemptQuestionSelector
+  grader: AttemptGrader
+  gate: "QualificationAssignmentGate" {style.fill: "#ffe8e8"}
+}
+
+repo: "Repository Layer" {
+  questionRepo: "QuestionRepository\nQuestionOptionRepository"
+  setRepo: "QuestionSetRepository\nQuestionSetItemRepository"
+  defRepo: QualificationQuestionDefinitionRepository
+  reviewRepo: QualificationQuestionReviewRepository
+  configRepo: CampaignQualificationConfigRepository
+  poolRepo: "CampaignQualificationPoolItemRepository\nCampaignQualificationSetRuleRepository"
+  attemptRepo: "QualificationAttemptRepository\n(lockByUuid = PESSIMISTIC_WRITE)"
+  answerRepo: "QualificationAttemptQuestionRepository\nQualificationAttemptAnswerRepository"
+}
+
+db: "MariaDB" {shape: cylinder}
+
+job: "QualificationAttemptExpiryJob\ncron: 0 */5 * * * *"
+
+assignment: "TaskDistributionServiceImpl\nRecommendedTaskAssignmentServiceImpl" {
+  style.fill: "#e8f4ff"
+}
+
+campaignSvc: "CampaignServiceImpl\napprove() / activate()"
+
+# admin path
+admin -> api.questionCtrl -> svc.questionSvc -> repo.questionRepo
+admin -> api.setCtrl -> svc.setSvc -> repo.setRepo
+admin -> api.qualCtrl -> svc.configSvc -> repo.configRepo
+admin -> api.qQuestionCtrl -> svc.qQuestionSvc -> repo.defRepo
+api.qQuestionCtrl -> svc.reviewSvc -> repo.reviewRepo
+api.qualCtrl -> svc.readinessSvc
+
+campaignSvc -> svc.poolSvc: "freezeForGoLive\n=> config.frozen = TRUE"
+svc.poolSvc -> repo.poolRepo
+svc.poolSvc -> repo.configRepo
+
+# candidate path
+candidate -> api.attemptStartCtrl -> svc.attemptSvc
+candidate -> api.attemptCtrl -> svc.attemptSvc
+svc.attemptSvc -> svc.starter: "startAttempt"
+svc.starter -> svc.selector: "bốc đề theo set rule"
+svc.attemptSvc -> svc.grader: "submit() sau lockByUuid"
+svc.attemptSvc -> repo.attemptRepo
+svc.attemptSvc -> repo.answerRepo
+
+# gate
+assignment -> svc.gate: "blockedProjectIds / requirePassed"
+svc.gate -> repo.configRepo: "config frozen mới nhất"
+svc.gate -> repo.attemptRepo: "exists(configId, userId, PASSED)"
+
+job -> repo.attemptRepo: "quá expires_at\nhoặc campaign rời ACTIVE => EXPIRED"
+
+repo -> db

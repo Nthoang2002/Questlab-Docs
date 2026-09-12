@@ -1,0 +1,47 @@
+# Flow 7 — External Storage Scheduled Import (cron 0 * * * * *)
+# Render: https://play.d2lang.com/
+
+shape: sequence_diagram
+
+sched: "Spring Scheduler"
+tick: ExternalStorageSchedulerTick
+schedRepo: ExternalStorageScheduleRepository
+evaluator: "ScheduleFireEvaluator + CronCompiler"
+runSvc: ExternalStorageRunService
+scanSvc: ExternalStorageScanService
+registry: ExternalStorageProviderRegistry
+cipher: AesGcmSecretCipher
+provider: "S3 / MinIO / SFTP"
+factory: ExternalImportJobFactory
+archive: ExternalStorageArchiveService
+worker: TaskImportWorkerJob
+db: MariaDB
+
+sched -> tick: "tick() — @ConditionalOnProperty external-storage.enabled=true"
+tick -> schedRepo: findAllEnabled()
+schedRepo -> db: "SELECT external_storage_schedules"
+db -> tick: "List<ExternalStorageSchedule>"
+
+Voi_moi_schedule: {
+  tick -> evaluator: "evaluate(schedule, now)"
+  evaluator -> tick: "FireDecision { shouldFire, reason } — false thì SKIP"
+
+  tick -> runSvc: "createRun(schedule, RunTriggerSource.SCHEDULE)"
+  runSvc -> db: "INSERT external_storage_runs (CREATED)"
+  runSvc -> tick: "SKIPPED_ALREADY_RUNNING / SKIPPED_DISABLED -> dừng"
+
+  tick -> scanSvc: "scan(schedule, run)"
+  scanSvc -> registry: "resolve provider theo ExternalProviderType"
+  registry -> cipher: "giải mã credential (DbBacked) hoặc đọc env (EnvBacked)"
+  registry -> provider: "list(prefix)"
+  provider -> scanSvc: "danh sách file + batch folder"
+  scanSvc -> scanSvc: "đọc manifest + ExternalStorageCompatibilityValidator"
+  scanSvc -> db: "INSERT external_import_batches"
+  scanSvc -> factory: "tạo job cho từng batch"
+  factory -> db: "INSERT task_import_jobs (EXTERNAL_STORAGE_SCHEDULED, PENDING)"
+  scanSvc -> archive: "move file đã xử lý"
+  archive -> provider: "{root}/{projectUuid}/{yyyy}/{MM}/{dd}/{batchId}/{relative}"
+  scanSvc -> db: "run status -> REGISTERED_BATCHES / COMPLETED"
+}
+
+worker -> db: "nhặt task_import_jobs PENDING (Flow 6)"

@@ -1,0 +1,47 @@
+# Flow 6 — Task Import Portal ASYNC
+# Render: https://play.d2lang.com/
+
+shape: sequence_diagram
+
+admin: Admin Portal
+ctrl: TaskImportController
+svc: TaskImportServiceImpl
+storage: "ImportFileStorage (FILE_SERVICE | LOCAL)"
+jobRepo: TaskImportJobRepository
+worker: TaskImportWorkerJob
+jobSvc: TaskImportJobService
+parser: TaskImportParserFactory
+planner: ImportItemPlanner
+lsImport: LabelStudioImportClient
+ls: Label Studio
+mirror: "ImportMirrorExecutor / TaskMirrorServiceImpl"
+db: MariaDB
+
+admin -> ctrl: "POST /projects/{uuid}/task-imports (multipart)"
+ctrl -> svc: createImport
+svc -> svc: "ProjectReadinessValidator + TaskImportFileValidator"
+svc -> storage: "store(file)"
+svc -> jobRepo: "INSERT task_import_jobs (PENDING, PORTAL_UPLOAD, ASYNC)"
+jobRepo -> db: INSERT
+svc -> admin: "202-style: trả jobUuid ngay"
+
+Worker_scan_moi_10s: {
+  worker -> jobRepo: "reclaimStaleQueued() — QUEUED quá 15' -> re-arm"
+  worker -> jobRepo: "findByStatusIn([PENDING, RETRYING, WAITING], top 20)"
+  worker -> jobSvc: "claimStatus(jobId, entry, QUEUED) — COMPARE-AND-SET"
+  jobSvc -> db: "UPDATE ... WHERE id=? AND status=?"
+  db -> worker: "0 row -> instance khác đã thắng, skip"
+
+  worker -> parser: "LabelConfigDataKeyResolver + parse JSON/CSV/TSV/TXT"
+  worker -> planner: "ExecutionPlan — retry chỉ gửi item chưa có ls_task_id"
+  worker -> lsImport: "importTasks(...)"
+  lsImport -> ls: "POST /api/projects/{id}/import"
+  ls -> lsImport: "importId (nếu async)"
+  lsImport -> ls: "GET /api/projects/{id}/imports/{importId} — poll 3s, timeout 600s"
+  worker -> mirror: "mirror task về local"
+  mirror -> db: "INSERT tasks + task_import_items.ls_task_id"
+  worker -> jobRepo: "status = COMPLETED | PARTIAL_FAILED | FAILED_RETRYABLE"
+}
+
+admin -> ctrl: "GET /task-import-jobs/{uuid} + /items"
+admin -> ctrl: "POST /task-import-jobs/{uuid}/retry -> RETRYING"

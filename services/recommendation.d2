@@ -1,0 +1,98 @@
+# Questlab — Task Recommendation + Redis
+# Render: https://play.d2lang.com/
+
+direction: right
+
+title: |md
+  # Home Recommendation — nơi duy nhất dùng Redis
+| {near: top-center}
+
+app: "Mobile App — màn hình Home" {shape: person}
+
+api: "TaskRecommendationController\n/assignments/recommendations" {
+  get: "GET  /  (danh sách gợi ý)"
+  assign: "POST /{recommendationId}/assign"
+}
+
+svc: "Business Layer" {
+  recSvc: TaskRecommendationServiceImpl
+  candidateSvc: "TaskRecommendationCandidateServiceImpl\npool-size = 20"
+  cacheSvc: "TaskRecommendationCacheServiceImpl\n(mọi op bọc DataAccessException)" {
+    style.fill: "#ffe0e0"
+  }
+  assignSvc: "RecommendedTaskAssignmentServiceImpl\nrevalidate -> lock -> assign"
+  eligibility: ProjectEligibilityServiceImpl
+  gate: QualificationAssignmentGate
+}
+
+redis: "Redis — database 11 (CacheRedisService)" {
+  shape: cylinder
+  style.fill: "#ffe0e0"
+  k1: "questlab:recommendations:user:{userId}\nString JSON, TTL 600s"
+  k2: "questlab:recommendations:id:{recommendationId}\nString JSON, TTL 600s"
+  k3: "questlab:recommendations:watchlist\nHASH userId -> 1 (dedup, no TTL)"
+}
+
+repo: "Repository" {
+  taskRepo: "TaskRepository"
+  q1: "findRecommendableTaskIds\nKHÔNG lock (read-only)"
+  q2: "lockRecommendedTaskForUser\nFOR UPDATE (click time)"
+  assignedRepo: AssignedTaskRepository
+}
+
+db: "MariaDB — tasks / assigned_tasks / projects" {shape: cylinder}
+
+job: "TaskRecommendationRefillJob\ncron 0 */5 * * * *  batch-size 100" {
+  style.fill: "#eaffea"
+}
+
+producers: "Ai đẩy vào watchlist" {
+  p1: "AnnotationServiceImpl.createAnnotation"
+  p2: "AssignmentExpiryJob"
+  p3: "RecommendedTaskAssignmentServiceImpl.assign"
+  p4: "TaskRecommendationServiceImpl (cache miss)"
+}
+
+# read path
+app -> api.get -> svc.recSvc
+svc.recSvc -> svc.cacheSvc: "readUserCache"
+svc.cacheSvc -> redis.k1
+svc.recSvc -> svc.candidateSvc: "MISS -> build(userId, 20, ttl)"
+svc.candidateSvc -> svc.eligibility
+svc.candidateSvc -> repo.q1
+svc.recSvc -> svc.cacheSvc: "writeUserCache (envelope + từng lookup)"
+svc.cacheSvc -> redis.k2
+
+# assign path
+app -> api.assign -> svc.assignSvc
+svc.assignSvc -> svc.cacheSvc: "1. readLookup\n2. ownership\n3. expiry"
+svc.cacheSvc -> redis.k2
+svc.assignSvc -> svc.eligibility: "4a. revalidate policy TẠI THỜI ĐIỂM CLICK"
+svc.assignSvc -> svc.gate: "4b. qualification"
+svc.assignSvc -> repo.q2: "4c. lock"
+svc.assignSvc -> repo.assignedRepo: "4d. tạo AssignedTask PENDING"
+svc.assignSvc -> svc.cacheSvc: "5. evictUserCache + enqueueWatchlist"
+
+# refill
+job -> svc.cacheSvc: "popWatchlistBatch(100)"
+svc.cacheSvc -> redis.k3
+job -> svc.candidateSvc: "build lại cache cho từng user"
+
+producers.p1 -> redis.k3
+producers.p2 -> redis.k3
+producers.p3 -> redis.k3
+producers.p4 -> redis.k3
+
+repo.q1 -> db
+repo.q2 -> db
+repo.assignedRepo -> db
+
+note: |md
+  ### Nguyên tắc
+  Cache **chỉ là gợi ý**, không phải quyền.
+  Mọi điều kiện được **revalidate tại thời điểm click**,
+  và `FOR UPDATE` đặt ở đó — không phải lúc build cache.
+
+  Redis down => `DataAccessException` => coi như cache miss => degrade sang SQL.
+  `POST /assignments/request` KHÔNG đụng Redis.
+| {near: bottom-center}

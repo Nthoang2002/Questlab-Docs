@@ -1,0 +1,102 @@
+# Questlab — Project / Campaign / Reward
+# Render: https://play.d2lang.com/
+
+direction: right
+
+title: |md
+  # Project & Campaign domain
+| {near: top-center}
+
+admin: "Admin Portal (Angular)" {shape: person}
+user: "Mobile App user" {shape: person}
+
+api: "API Layer" {
+  projectCtrl: "ProjectController\n/projects"
+  policyCtrl: "ProjectAssignmentPolicyController\n/projects/{uuid}/assignment-policy"
+  campaignCtrl: "CampaignController\n/campaigns"
+  rewardCtrl: "RewardController\n/rewards"
+}
+
+service: "Business Layer" {
+  projectSvc: "ProjectServiceImpl"
+  discoverySvc: "ProjectDiscoveryServiceImpl"
+  policySvc: "ProjectAssignmentPolicyServiceImpl"
+  campaignSvc: "CampaignServiceImpl"
+  poolSvc: "QualificationPoolServiceImpl\nfreezeForGoLive()"
+  notifySvc: "CampaignNotificationServiceImpl"
+  matcher: "ProjectTemplateMatcher"
+  rewardSvc: "RewardServiceImpl"
+}
+
+repo: "Repository Layer" {
+  projectRepo: ProjectRepository
+  policyRepo: ProjectAssignmentPolicyRepository
+  campaignRepo: CampaignRepository
+  campaignProjectRepo: CampaignProjectRepository
+  campaignRewardRepo: CampaignRewardRepository
+  rewardRepo: RewardRepository
+  templateRepo: AnnotationTemplateRepository
+}
+
+db: "MariaDB" {
+  shape: cylinder
+  t1: "projects"
+  t2: "project_assignment_policies"
+  t3: "campaigns"
+  t4: "campaign_projects"
+  t5: "campaign_rewards"
+  t6: "rewards"
+  t7: "annotation_templates"
+}
+
+ls: "Label Studio" {shape: hexagon}
+notif: "notification-service" {shape: hexagon}
+
+job: "CampaignExpiryJob\ncron: 0 0 1 * * * (1h sáng)"
+
+admin -> api.projectCtrl
+admin -> api.policyCtrl
+admin -> api.campaignCtrl
+user -> api.campaignCtrl: "GET /campaigns/public"
+user -> api.projectCtrl: "GET /projects/discover"
+
+api.projectCtrl -> service.projectSvc
+api.projectCtrl -> service.discoverySvc
+api.policyCtrl -> service.policySvc
+api.campaignCtrl -> service.campaignSvc
+api.rewardCtrl -> service.rewardSvc
+
+service.projectSvc -> ls: "createNewProject / updateProject\n(chỉ ProjectType = LABELING)"
+service.projectSvc -> service.matcher: "resolve(label_config)"
+service.matcher -> repo.templateRepo
+
+service.campaignSvc -> service.poolSvc: "approve / activate\n=> freezeForGoLive"
+service.campaignSvc -> service.notifySvc
+service.notifySvc -> notif: "NotificationClient (HTTP)"
+
+service.projectSvc -> repo.projectRepo
+service.policySvc -> repo.policyRepo
+service.campaignSvc -> repo.campaignRepo
+service.campaignSvc -> repo.campaignProjectRepo
+service.campaignSvc -> repo.campaignRewardRepo
+service.rewardSvc -> repo.rewardRepo
+
+repo.projectRepo -> db.t1
+repo.policyRepo -> db.t2
+repo.campaignRepo -> db.t3
+repo.campaignProjectRepo -> db.t4
+repo.campaignRewardRepo -> db.t5
+repo.rewardRepo -> db.t6
+repo.templateRepo -> db.t7
+
+job -> repo.campaignRepo: "closeExpiredCampaigns(today)"
+
+lifecycle: |md
+  ### Campaign status
+  `DRAFT` --approve--> `ACTIVE`
+  `ACTIVE` --deactivate--> `INACTIVE`
+  `INACTIVE` --activate--> `ACTIVE`
+  `ACTIVE` --CampaignExpiryJob--> `CLOSED`
+
+  `is_public` độc lập với `status`
+| {near: bottom-center}

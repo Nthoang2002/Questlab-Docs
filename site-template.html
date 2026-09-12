@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Questlab Docs</title>
+  <style>
+    :root{--bg:#f6f7fb;--panel:#fff;--text:#20242c;--muted:#68707d;--line:#e2e6ec;--brand:#5b5bd6;--soft:#eeeeff;--code:#181b22;--shadow:0 10px 35px rgba(35,40,55,.07)}
+    [data-theme=dark]{--bg:#111318;--panel:#191c23;--text:#ecedf1;--muted:#a3a9b4;--line:#30343e;--brand:#9b9cff;--soft:#292a4c;--code:#0c0e12;--shadow:none}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.7 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+    button,input{font:inherit}.app{display:grid;grid-template-columns:290px minmax(0,1fr);min-height:100vh}.sidebar{position:fixed;inset:0 auto 0 0;width:290px;background:var(--panel);border-right:1px solid var(--line);padding:22px 16px;overflow:auto;z-index:5}
+    .brand{display:flex;gap:11px;align-items:center;padding:0 8px 18px}.logo{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,#5b5bd6,#8b5cf6);color:#fff;font-weight:800}.brand strong{display:block;font-size:17px}.brand small,.meta{color:var(--muted)}
+    .search{width:100%;border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:10px;padding:10px 12px;outline:none}.search:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--soft)}
+    .group{margin-top:20px}.group-title{text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-size:11px;font-weight:750;padding:0 9px 6px}.nav-item{display:flex;gap:8px;align-items:flex-start;width:100%;border:0;background:transparent;color:var(--text);text-align:left;border-radius:8px;padding:8px 9px;cursor:pointer;line-height:1.35}.nav-item:hover,.nav-item.active{background:var(--soft);color:var(--brand)}.tag{font-size:9px;padding:2px 4px;border:1px solid currentColor;border-radius:4px;opacity:.7;margin-top:2px}.empty{color:var(--muted);padding:14px 9px}
+    .main{grid-column:2;padding:28px 32px 70px}.toolbar{max-width:1040px;margin:0 auto 16px;display:flex;justify-content:space-between;align-items:center}.crumb{color:var(--muted);font-size:13px}.actions{display:flex;gap:8px}.icon-btn{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:9px;padding:7px 11px;cursor:pointer}.icon-btn:hover{border-color:var(--brand)}
+    .article{max-width:1040px;margin:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:48px 56px;box-shadow:var(--shadow);overflow:hidden}.article h1{font-size:2.2rem;line-height:1.2;margin:0 0 1.4rem}.article h2{font-size:1.55rem;border-bottom:1px solid var(--line);padding-bottom:.4rem;margin-top:2.3rem}.article h3{font-size:1.2rem;margin-top:1.8rem}.article h4{font-size:1.05rem}.article a{color:var(--brand);text-decoration:none}.article a:hover{text-decoration:underline}.article p{margin:1em 0}.article ul,.article ol{padding-left:1.5rem}.article blockquote{margin:1.2rem 0;padding:.6rem 1rem;border-left:4px solid var(--brand);background:var(--soft);color:var(--muted)}
+    code{font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--soft);padding:.14em .35em;border-radius:5px}pre{position:relative;background:var(--code);color:#e6edf3;border-radius:10px;padding:18px;overflow:auto;tab-size:2}pre code{background:transparent;padding:0;color:inherit}.table-wrap{overflow:auto;margin:1.2rem 0}table{border-collapse:collapse;width:100%;font-size:14px}th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}th{background:var(--soft)}hr{border:0;border-top:1px solid var(--line);margin:2rem 0}.anchor{opacity:0;margin-left:.35em}.article h2:hover .anchor,.article h3:hover .anchor{opacity:.65}
+    .d2-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}.d2-head h1{margin:0}.hint{background:var(--soft);border-radius:10px;padding:12px 15px;color:var(--muted);margin-bottom:18px}.d2-source{min-height:55vh}.mobile-top{display:none}.search-hit{background:#fff1a8;color:#26231b;border-radius:2px}
+    @media(max-width:800px){.app{display:block}.sidebar{transform:translateX(-100%);transition:.2s;width:min(88vw,320px);box-shadow:var(--shadow)}.sidebar.open{transform:none}.main{padding:14px 12px 50px}.article{padding:28px 20px;border-radius:11px}.toolbar{margin-bottom:10px}.mobile-top{display:inline-block}.article h1{font-size:1.75rem}.article h2{font-size:1.35rem}.crumb{max-width:55vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+    @media print{.sidebar,.toolbar{display:none}.app{display:block}.main{padding:0}.article{border:0;box-shadow:none;max-width:none;padding:0}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><div class="logo">Q</div><div><strong>Questlab Docs</strong><small>Tài liệu kỹ thuật</small></div></div>
+      <input class="search" id="search" type="search" placeholder="Tìm tài liệu…" aria-label="Tìm tài liệu">
+      <nav id="nav"></nav>
+    </aside>
+    <main class="main">
+      <div class="toolbar"><div><button class="icon-btn mobile-top" id="menuBtn">☰</button> <span class="crumb" id="crumb"></span></div><div class="actions"><button class="icon-btn" id="printBtn" title="In hoặc lưu PDF">In</button><button class="icon-btn" id="themeBtn" title="Đổi giao diện">◐</button></div></div>
+      <article class="article" id="content"></article>
+    </main>
+  </div>
+  <script>
+    const DOCS = /*__DOCS_DATA__*/[];
+    const $ = (s) => document.querySelector(s);
+    const escapeHtml = (s) => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const slug = (s) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+
+    function inline(text) {
+      let s = escapeHtml(text);
+      s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+      s = s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2" style="max-width:100%">');
+      s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, href) => `<a href="${href}">${label}</a>`);
+      s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/__([^_]+)__/g, '<strong>$1</strong>');
+      s = s.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+      s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+      return s;
+    }
+
+    function markdown(source) {
+      const lines = source.replace(/\r/g,'').split('\n'); let out='', i=0, inCode=false, code=[], lang='', list=null, quote=[];
+      const closeList = () => { if(list){out += `</${list}>`; list=null;} };
+      const flushQuote = () => { if(quote.length){out += `<blockquote>${markdown(quote.join('\n'))}</blockquote>`;quote=[];} };
+      while(i < lines.length) {
+        const line=lines[i];
+        if(inCode){ if(/^```/.test(line)){out+=`<pre><code class="language-${escapeHtml(lang)}">${escapeHtml(code.join('\n'))}</code></pre>`;inCode=false;code=[];}else code.push(line);i++;continue; }
+        const fence=line.match(/^```\s*(.*)$/); if(fence){closeList();flushQuote();inCode=true;lang=fence[1];i++;continue;}
+        if(/^>\s?/.test(line)){closeList();quote.push(line.replace(/^>\s?/,''));i++;continue;} else flushQuote();
+        const h=line.match(/^(#{1,6})\s+(.+)$/); if(h){closeList();const n=h[1].length,id=slug(h[2]);out+=`<h${n} id="${id}">${inline(h[2])}<a class="anchor" href="#${id}">#</a></h${n}>`;i++;continue;}
+        if(/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)){closeList();out+='<hr>';i++;continue;}
+        if(line.includes('|') && i+1<lines.length && /^\s*\|?\s*:?-{3,}/.test(lines[i+1])){closeList();const rows=[];rows.push(line);i+=2;while(i<lines.length&&lines[i].includes('|')&&lines[i].trim()){rows.push(lines[i++]);}const cells=r=>r.trim().replace(/^\||\|$/g,'').split('|').map(x=>x.trim());out+='<div class="table-wrap"><table><thead><tr>'+cells(rows[0]).map(x=>`<th>${inline(x)}</th>`).join('')+'</tr></thead><tbody>'+rows.slice(1).map(r=>'<tr>'+cells(r).map(x=>`<td>${inline(x)}</td>`).join('')+'</tr>').join('')+'</tbody></table></div>';continue;}
+        const ul=line.match(/^\s*[-+*]\s+(.+)$/), ol=line.match(/^\s*\d+[.)]\s+(.+)$/); if(ul||ol){const kind=ul?'ul':'ol';if(list!==kind){closeList();out+=`<${kind}>`;list=kind;}out+=`<li>${inline((ul||ol)[1])}</li>`;i++;continue;} else closeList();
+        if(!line.trim()){i++;continue;}
+        let para=line.trim();i++;while(i<lines.length&&lines[i].trim()&&!/^(#{1,6})\s|^```|^>|^\s*[-+*]\s+|^\s*\d+[.)]\s+/.test(lines[i])){if(lines[i].includes('|')&&i+1<lines.length&&/^\s*\|?\s*:?-{3,}/.test(lines[i+1]))break;para+=' '+lines[i].trim();i++;}out+=`<p>${inline(para)}</p>`;
+      }
+      closeList();flushQuote();if(inCode)out+=`<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`;return out;
+    }
+
+    function renderNav(filter='') {
+      const q=filter.trim().toLocaleLowerCase('vi'); const visible=DOCS.filter(d=>!q||(`${d.title} ${d.path} ${d.content}`).toLocaleLowerCase('vi').includes(q));
+      const groups={}; visible.forEach(d=>(groups[d.group]??=[]).push(d));
+      $('#nav').innerHTML=Object.entries(groups).map(([group,items])=>`<div class="group"><div class="group-title">${escapeHtml(group)}</div>${items.map(d=>`<button class="nav-item" data-path="${escapeHtml(d.path)}"><span>${escapeHtml(d.title)}</span>${d.type==='d2'?'<span class="tag">D2</span>':''}</button>`).join('')}</div>`).join('')||'<div class="empty">Không tìm thấy tài liệu.</div>';
+      document.querySelectorAll('.nav-item').forEach(btn=>btn.onclick=()=>openDoc(btn.dataset.path)); highlightActive();
+    }
+    function highlightActive(){document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.path===current?.path));}
+    let current;
+    function openDoc(docPath, push=true) {
+      const d=DOCS.find(x=>x.path===decodeURIComponent(docPath))||DOCS[0];current=d;
+      $('#crumb').textContent=d.path; document.title=`${d.title} · Questlab Docs`;
+      if(d.type==='md') $('#content').innerHTML=markdown(d.content);
+      else $('#content').innerHTML=`<div class="d2-head"><h1>${escapeHtml(d.title)}</h1><button class="icon-btn" id="copyBtn">Sao chép mã D2</button></div><div class="hint">Đây là mã nguồn sơ đồ D2. Sao chép mã rồi mở <a href="https://play.d2lang.com/" target="_blank" rel="noreferrer">D2 Playground ↗</a> để xem sơ đồ trực quan.</div><pre class="d2-source"><code>${escapeHtml(d.content)}</code></pre>`;
+      $('#content').querySelectorAll('a[href]').forEach(a=>{const raw=a.getAttribute('href');if(/\.(md|d2)(#.*)?$/i.test(raw)){a.onclick=e=>{e.preventDefault();const [p,hash]=raw.split('#');const resolved=new URL(p,'https://local/'+d.path).pathname.slice(1);openDoc(resolved);if(hash)setTimeout(()=>document.getElementById(hash)?.scrollIntoView(),0);};}});
+      $('#copyBtn')?.addEventListener('click',async e=>{await navigator.clipboard.writeText(d.content);e.target.textContent='Đã sao chép ✓';setTimeout(()=>e.target.textContent='Sao chép mã D2',1500);});
+      if(push) history.pushState(null,'','#'+encodeURIComponent(d.path));highlightActive();$('#sidebar').classList.remove('open');window.scrollTo(0,0);
+    }
+    $('#search').oninput=e=>renderNav(e.target.value); $('#themeBtn').onclick=()=>{const dark=document.documentElement.dataset.theme!=='dark';document.documentElement.dataset.theme=dark?'dark':'light';localStorage.setItem('questlab-theme',dark?'dark':'light');};
+    $('#printBtn').onclick=()=>print();$('#menuBtn').onclick=()=>$('#sidebar').classList.toggle('open');
+    document.documentElement.dataset.theme=localStorage.getItem('questlab-theme')||((matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light');
+    addEventListener('popstate',()=>openDoc(location.hash.slice(1)||'README.md',false));renderNav();openDoc(location.hash.slice(1)||'README.md',false);
+  </script>
+</body>
+</html>

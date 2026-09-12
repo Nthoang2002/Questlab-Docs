@@ -1,0 +1,28 @@
+# Flow 5 — Assignment Expiry (cron 0 0/10 * * * *)
+# Render: https://play.d2lang.com/
+
+shape: sequence_diagram
+
+sched: "Spring Scheduler"
+job: AssignmentExpiryJob
+assignedRepo: AssignedTaskRepository
+taskRepo: TaskRepository
+cache: TaskRecommendationCacheServiceImpl
+redis: Redis
+db: MariaDB
+
+sched -> job: "run() — cron assignment.expiry.cron"
+
+job -> assignedRepo: "findDistinctUserIdsPendingExpiredBefore(now)"
+assignedRepo -> db: "SELECT DISTINCT user_id WHERE status=PENDING AND expired_at < now"
+db -> job: "List<UUID> — PHẢI đọc TRƯỚC khi update"
+
+job -> assignedRepo: "markExpiredBefore(now)"
+assignedRepo -> db: "UPDATE assigned_tasks SET status='EXPIRED'\nWHERE status='PENDING' AND expired_at < now"
+db -> job: "số row bị đổi"
+
+job -> taskRepo: "revertToAvailableWhereNoPending(now)"
+taskRepo -> db: "UPDATE tasks SET task_status='AVAILABLE'\nWHERE IN_PROGRESS AND không còn PENDING\nAND COUNT(ANNOTATED) < overlap"
+
+job -> cache: "enqueueWatchlist(userId) cho từng user bị ảnh hưởng"
+cache -> redis: "HSET questlab:recommendations:watchlist"

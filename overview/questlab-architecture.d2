@@ -1,0 +1,184 @@
+# ============================================================================
+#  QUESTLAB — HIGH-LEVEL BACKEND ARCHITECTURE
+#  Render: https://play.d2lang.com/  (paste toàn bộ file này)
+#
+#  Chỉ chứa component CÓ THẬT trong source. Chi tiết từng domain xem
+#  docs/services/*.d2, từng flow xem docs/flows/*.d2
+# ============================================================================
+
+direction: right
+
+title: |md
+  # Questlab — Backend Architecture
+  Spring Boot 3.3.2 · Java 17 · MariaDB · Redis · Label Studio
+| {near: top-center}
+
+# ─────────────────────────── 1. EXTERNAL ACTORS ───────────────────────────
+
+actors: "External Actors" {
+  style.fill: "#f7f7f7"
+
+  mobile: "Mobile App\n(annotator)" {shape: person}
+  portal: "admin-portal\n(Angular)" {shape: person}
+  partnerBackend: "Partner backend\n(SDK, service-to-service)" {shape: person}
+  lsAdmin: "Label Studio admin" {shape: person}
+}
+
+gateway: "API Gateway\n· đổi x-api-key -> JWT (qua auth-service)\n· strip Authorization của client" {
+  shape: hexagon
+  style.fill: "#fff0d0"
+}
+
+# ─────────────────────────── 2. APPLICATION ───────────────────────────────
+
+questlab: "questlab-service  ·  port 9090  ·  QuestlabApplication" {
+  style.fill: "#f0f7ff"
+
+  filters: "Filter chain (không dùng Spring Security)" {
+    currentUser: "CurrentUserFilter\nJWT sub -> CurrentUserContext (ThreadLocal)\nWHITE_LIST: /media/ /integration/ /swagger-ui /v3/api-docs"
+    partnerFilter: "IntegrationPartnerFilter\n(/integration/**) -> PartnerContext + TransactionContext"
+  }
+
+  controller: "Controller Layer  ·  ~171 endpoint" {
+    tasks: "TaskController · AssignmentController\nAnnotationController · TaskRecommendationController"
+    projects: "ProjectController · ProjectAssignmentPolicyController\nCampaignController · RewardController · TemplateController"
+    qual: "CampaignQualificationController · QualificationAttemptController\nQualificationQuestionController · QuestionController · QuestionSetController"
+    money: "CompensationController · PayoutAccountController\nPayoutRequestController · PayoutRequestAdminController\nPayoutCapabilityAdminController"
+    imports: "TaskImportController · TaskImportJobController\nExternalStorageController · ExternalAssetController"
+    integ: "IntegrationController · PartnerAdminController"
+    misc: "MediaController · AssignmentConditionDefinitionController"
+    webhook: "LsWebhookController\nPOST /internal/webhooks/label-studio" {style.fill: "#e8f4ff"}
+  }
+
+  service: "Service Layer  ·  ~55 @Service" {
+    dist: "TaskDistributionServiceImpl\nProjectEligibilityServiceImpl\nAssignmentPolicyEvaluatorImpl"
+    ann: "AnnotationServiceImpl\nAnnotationValidationOrchestrator"
+    sync: "SyncServiceImpl (@Async lsSyncExecutor)\nProjectTemplateMatcher"
+    proj: "ProjectServiceImpl · CampaignServiceImpl\nProjectDiscoveryServiceImpl"
+    qualSvc: "QualificationAttemptServiceImpl · AttemptGrader\nQualificationPoolServiceImpl · QualificationAssignmentGate"
+    moneySvc: "CompensationLedgerWriter · EarningIngressServiceImpl\nPayoutRequestServiceImpl · PayoutProcessingServiceImpl\nPayoutStateMachine"
+    importSvc: "TaskImportServiceImpl · ImportItemPlanner\nExternalStorageScanService · ExternalStorageProviderRegistry"
+    rec: "TaskRecommendationServiceImpl\nTaskRecommendationCacheServiceImpl\nRecommendedTaskAssignmentServiceImpl"
+    partnerSvc: "PartnerTaskSyncServiceImpl · PartnerUserSyncServiceImpl\nPartnerAnnotationSyncServiceImpl"
+    mediaSvc: "MediaServiceImpl · MediaSigningServiceImpl (HMAC-SHA256)"
+  }
+
+  repository: "Repository Layer  ·  47 Spring Data JPA repository" {
+    core: "TaskRepository (FOR UPDATE)\nAssignedTaskRepository · ProjectRepository\nTaskAnnotationRepository · SyncJobLogRepository"
+    other: "Campaign* · Qualification* · Question*\nCompensation* · Payout* (PESSIMISTIC_WRITE)\nTaskImport* · ExternalStorage* · Integration*"
+  }
+
+  scheduler: "Scheduler  ·  9 @Scheduled  ·  @EnableScheduling" {
+    style.fill: "#eaffea"
+    s1: "ReconciliationJob — 0 */3 * * * *"
+    s2: "AssignmentExpiryJob — 0 0/10 * * * *"
+    s3: "CampaignExpiryJob — 0 0 1 * * *"
+    s4: "QualificationAttemptExpiryJob — 0 */5 * * * *"
+    s5: "TaskRecommendationRefillJob — 0 */5 * * * *"
+    s6: "TaskImportWorkerJob — fixedDelay 10s"
+    s7: "ExternalStorageSchedulerTick — 0 * * * * *"
+    s8: "SftpImportScannerJob — 0 */5 * * * * (tắt mặc định)"
+    s9: "PayoutNotificationDispatchJob — fixedDelay 30s"
+  }
+
+  integration: "Integration Layer (RestTemplate + Apache HttpClient5)" {
+    style.fill: "#ffe8e8"
+    lsClient: "LabelStudioClient\nLabelStudioImportClient"
+    authClient: "AuthClient · AuthProfileClient\nAuthAdminClient · JwtVerifier"
+    notifClient: "NotificationClient"
+    fileClient: "FileServiceApiImplClient"
+    providers: "S3ExternalStorageProvider (AWS SDK v2)\nSftpExternalStorageProvider (Mina SSHD)"
+  }
+
+  errors: "GlobalExceptionHandler\n@RestControllerAdvice — luôn trả HTTP 200,\nmã lỗi thật nằm trong body httpCode/errorCode"
+}
+
+# ─────────────────────────── 3. INFRASTRUCTURE ────────────────────────────
+
+infra: "Infrastructure" {
+  style.fill: "#f7f7f7"
+
+  db: "MariaDB — questlab_data\n47 @Entity = 47 bảng\nddl-auto: none, migration SQL thủ công V2..V37" {
+    shape: cylinder
+  }
+
+  redis: "Redis (database 11)\nCHỈ dùng cho Home recommendation:\nuser cache · lookup · watchlist (Hash)" {
+    shape: cylinder
+  }
+
+  configServer: "Spring Cloud Config Server\nCONFIG_SERVER_URI (bootstrap.yml)" {shape: hexagon}
+  eureka: "Eureka Server\nregisterWithEureka=false, fetchRegistry=false" {shape: hexagon}
+  bootAdmin: "Spring Boot Admin\n(dpf-admin-server)" {shape: hexagon}
+}
+
+# ─────────────────────────── 4. EXTERNAL SYSTEMS ──────────────────────────
+
+external: "External Systems" {
+  style.fill: "#f5f0ff"
+
+  ls: "Label Studio\n/api/projects · /api/tasks · /api/annotations\n/api/projects/{id}/import  ·  webhook out" {
+    shape: hexagon
+  }
+  authService: "auth-service (ql-auth-service:9091)\nJWT HS256 · member-profile\n/internal/users/provision(-session)" {shape: hexagon}
+  notifService: "notification-service (ql-notify-service:9094)\nHTTP in -> Kafka nội bộ -> FCM / Mail" {shape: hexagon}
+  fileService: "file-service (ql-file-service:9093)\nupload / url" {shape: hexagon}
+  objectStore: "S3 / MinIO" {shape: cylinder}
+  sftpServer: "SFTP server" {shape: cylinder}
+}
+
+# ─────────────────────────── CONNECTIONS ──────────────────────────────────
+
+actors.mobile -> gateway
+actors.portal -> gateway
+actors.partnerBackend -> gateway: "x-api-key"
+actors.lsAdmin -> external.ls
+
+gateway -> questlab.filters: "Bearer JWT"
+questlab.filters -> questlab.controller
+
+external.ls -> questlab.controller.webhook: "webhook PROJECT_* / TASK_*"
+
+questlab.controller -> questlab.service
+questlab.service -> questlab.repository
+questlab.repository -> infra.db
+
+questlab.service -> questlab.integration
+questlab.scheduler -> questlab.service
+questlab.scheduler -> questlab.repository
+
+questlab.service.rec -> infra.redis: "cache + watchlist"
+questlab.scheduler.s5 -> infra.redis
+
+questlab.integration.lsClient -> external.ls
+questlab.integration.authClient -> external.authService
+questlab.integration.notifClient -> external.notifService
+questlab.integration.fileClient -> external.fileService
+questlab.integration.providers -> external.objectStore
+questlab.integration.providers -> external.sftpServer
+questlab.service.mediaSvc -> external.ls: "proxy /media/** (signed URL)"
+
+questlab.service -> questlab.errors: "exception"
+questlab.errors -> questlab.controller: "BaseMethodResponse"
+
+questlab -> infra.configServer: "bootstrap: nạp config"
+questlab -> infra.eureka: "eureka client"
+questlab -> infra.bootAdmin: "actuator /actuator/**"
+
+# ─────────────────────────── DEPLOY NOTE ──────────────────────────────────
+
+deploy: |md
+  ### Deployment
+  `Dockerfile` (openjdk 17, TZ Asia/Ho_Chi_Minh, `java -jar questlab-service.jar`)
+  → GitLab CI: `build → set_version → package → deploy → tag`
+  → push image `registry.3tit.vn/.../questlab-service:{prefix}.{version}`
+  → clone `questlab-core-helm-repo`, sed `values.yaml`, commit
+  → GitOps apply lên Kubernetes
+
+  Version lấy từ `#{version}#` trong **commit message**, không lấy từ `pom.xml`.
+| {near: bottom-center}
+
+nokafka: |md
+  ### Không tồn tại trong questlab-service
+  Kafka / RabbitMQ · Feign · Spring Security · Flyway/Liquibase runtime
+  Redisson / distributed lock · Quartz
+| {near: bottom-left}

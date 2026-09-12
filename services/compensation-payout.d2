@@ -1,0 +1,104 @@
+# Questlab — Compensation & Payout (RS2-10115)
+# Render: https://play.d2lang.com/
+
+direction: right
+
+title: |md
+  # Compensation & Payout — ledger, state machine, outbox
+| {near: top-center}
+
+user: "Annotator" {shape: person}
+accountant: "Kế toán / Admin" {shape: person}
+
+api: "API Layer" {
+  compCtrl: "CompensationController\n/compensation/**"
+  acctCtrl: "PayoutAccountController\n/payout-accounts/**"
+  reqCtrl: "PayoutRequestController\n/payout-requests/**"
+  adminReqCtrl: "PayoutRequestAdminController\n/admin/payout-requests/**"
+  capCtrl: "PayoutCapabilityAdminController\n/admin/payout-capabilities/**"
+}
+
+svc: "Business Layer" {
+  query: CompensationQueryServiceImpl
+  earning: "EarningIngressServiceImpl\nrecordEarning()\n(CỐ Ý không @Transactional)"
+  ledger: "CompensationLedgerWriter.apply()\nĐIỂM GHI DUY NHẤT\n@Transactional" {
+    style.fill: "#ffe8b0"
+  }
+  stateMachine: "PayoutStateMachine\n(static, transition + MonetaryEffect)" {
+    style.fill: "#ffd0d0"
+  }
+  reqSvc: PayoutRequestServiceImpl
+  procSvc: "PayoutProcessingServiceImpl\n1.lock request 2.state machine\n3.ledger 4.attempt 5.audit"
+  acctSvc: "PayoutAccountServiceImpl\n+ PayoutAccountWriter"
+  capSvc: "PayoutCapabilityServiceImpl\n+ PayoutCapabilityGuard"
+  enqueuer: PayoutNotificationEnqueuer
+  dispatcher: PayoutNotificationDispatcher
+}
+
+repo: "Repository Layer" {
+  txRepo: "CompensationTransactionRepository\nUNIQUE(idempotency_key)"
+  sumRepo: "UserCompensationSummaryRepository\nlockByUserIdAndCurrency = PESSIMISTIC_WRITE"
+  reqRepo: "PayoutRequestRepository\nPESSIMISTIC_WRITE"
+  attemptRepo: PayoutAttemptRepository
+  acctRepo: "PayoutAccountRepository\nPESSIMISTIC_WRITE"
+  notifRepo: "PayoutNotificationRepository (outbox)"
+  capRepo: "UserPayoutCapabilityRepository\nPESSIMISTIC_WRITE"
+}
+
+db: "MariaDB" {
+  shape: cylinder
+  t1: compensation_transactions
+  t2: user_compensation_summaries
+  t3: payout_requests
+  t4: payout_attempts
+  t5: payout_accounts
+  t6: payout_notifications
+  t7: user_payout_capabilities
+}
+
+job: "PayoutNotificationDispatchJob\nfixedDelay 30s\nreclaimStale + dispatchBatch" {
+  style.fill: "#eaffea"
+}
+
+notif: "notification-service" {shape: hexagon}
+
+user -> api.compCtrl -> svc.query -> repo.txRepo
+user -> api.acctCtrl -> svc.acctSvc -> repo.acctRepo
+user -> api.reqCtrl -> svc.reqSvc
+accountant -> api.adminReqCtrl -> svc.procSvc
+accountant -> api.capCtrl -> svc.capSvc -> repo.capRepo
+
+svc.earning -> svc.ledger: "LedgerEffect(EARNING_ACCRUAL)"
+svc.reqSvc -> svc.ledger: "lockOrCreateSummary\n+ PAYOUT_RESERVE"
+svc.procSvc -> svc.stateMachine: "transition hợp lệ? hiệu ứng tiền?"
+svc.procSvc -> svc.ledger: "PAYOUT_SETTLEMENT / PAYOUT_RELEASE"
+svc.procSvc -> repo.reqRepo: "1. lock request"
+svc.procSvc -> repo.attemptRepo
+svc.procSvc -> svc.enqueuer -> repo.notifRepo
+
+svc.ledger -> repo.sumRepo: "2. lock summary (thứ tự: request -> summary)"
+svc.ledger -> repo.txRepo: "saveAndFlush (UNIQUE nổ ngay)"
+
+job -> svc.dispatcher -> repo.notifRepo
+svc.dispatcher -> notif: "NotificationClient (push / mail)"
+
+repo.txRepo -> db.t1
+repo.sumRepo -> db.t2
+repo.reqRepo -> db.t3
+repo.attemptRepo -> db.t4
+repo.acctRepo -> db.t5
+repo.notifRepo -> db.t6
+repo.capRepo -> db.t7
+
+sm: |md
+  ### PayoutRequestStatus + MonetaryEffect
+  `PENDING` -> `PROCESSING` : NONE
+  `PENDING` -> `CANCELLED` : RELEASE
+  `PROCESSING` -> `PAID` : SETTLEMENT
+  `PROCESSING` -> `PAYMENT_FAILED` : NONE (giữ reserve)
+  `PROCESSING` -> `CANCEL_REQUESTED` : NONE
+  `PROCESSING` -> `CANCELLED` : RELEASE
+  `PAYMENT_FAILED` -> `PROCESSING` : NONE (retry)
+
+  `PENDING -> PAID` cố ý KHÔNG hợp lệ
+| {near: bottom-center}
